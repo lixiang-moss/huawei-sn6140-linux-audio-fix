@@ -1,0 +1,75 @@
+#!/bin/sh
+set -u
+
+HWDEV="${HWDEV:-/dev/snd/hwC0D0}"
+CARD="${CARD:-0}"
+BOOT_RETRIES="${BOOT_RETRIES:-6}"
+BOOT_DELAY_SECONDS="${BOOT_DELAY_SECONDS:-8}"
+ALLOW_UNTESTED="${ALLOW_UNTESTED:-0}"
+
+run() {
+    "$@" >/dev/null 2>&1 || true
+}
+
+is_supported_codec() {
+    codec_file="/proc/asound/card${CARD}/codec#0"
+
+    if [ ! -r "$codec_file" ]; then
+        return 1
+    fi
+
+    grep -q "Codec: Conexant SN6140" "$codec_file" || return 1
+    grep -q "Vendor Id: 0x14f11f87" "$codec_file" || return 1
+    return 0
+}
+
+apply_fix_once() {
+    if [ ! -e "$HWDEV" ]; then
+        echo "SN6140 hwdep device not found: $HWDEV" >&2
+        return 0
+    fi
+
+    if ! is_supported_codec && [ "$ALLOW_UNTESTED" != "1" ]; then
+        echo "This does not look like the tested Conexant SN6140 codec on card $CARD." >&2
+        echo "Set ALLOW_UNTESTED=1 only if you know your hardware needs this HDA verb sequence." >&2
+        return 0
+    fi
+
+    run amixer -q -c "$CARD" set Master 95% unmute
+    run amixer -q -c "$CARD" set Speaker 100% unmute
+    run amixer -q -c "$CARD" set PCM 100%
+    run amixer -q -c "$CARD" set "Auto-Mute Mode" Disabled
+
+    # Cold boots on Huawei CREF-XX can leave the SN6140 speaker amplifier asleep.
+    # Flip the route off and back on so the GPIO/EAPD state takes effect.
+    run hda-verb "$HWDEV" 0x17 SET_EAPD_BTLENABLE 0x0
+    run hda-verb "$HWDEV" 0x01 SET_GPIO_MASK 0x2
+    run hda-verb "$HWDEV" 0x01 SET_GPIO_DIRECTION 0x2
+    run hda-verb "$HWDEV" 0x01 SET_GPIO_DATA 0x0
+    run hda-verb "$HWDEV" 0x16 SET_CONNECT_SEL 0x0
+    sleep 0.4
+    run hda-verb "$HWDEV" 0x01 SET_GPIO_MASK 0x2
+    run hda-verb "$HWDEV" 0x01 SET_GPIO_DIRECTION 0x2
+    run hda-verb "$HWDEV" 0x01 SET_GPIO_DATA 0x2
+    run hda-verb "$HWDEV" 0x16 SET_CONNECT_SEL 0x1
+    run hda-verb "$HWDEV" 0x17 SET_EAPD_BTLENABLE 0x2
+}
+
+case "${1:-once}" in
+    boot)
+        i=1
+        while [ "$i" -le "$BOOT_RETRIES" ]; do
+            echo "Applying Huawei SN6140 audio fix attempt $i/$BOOT_RETRIES"
+            apply_fix_once
+            i=$((i + 1))
+            if [ "$i" -le "$BOOT_RETRIES" ]; then
+                sleep "$BOOT_DELAY_SECONDS"
+            fi
+        done
+        ;;
+    once|*)
+        apply_fix_once
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,8 @@
+[Unit]
+Description=Huawei SN6140 audio codec route fix
+After=sound.target systemd-user-sessions.service
+ConditionPathExists=/dev/snd/hwC0D0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/huawei-sn6140-audio-fix boot
