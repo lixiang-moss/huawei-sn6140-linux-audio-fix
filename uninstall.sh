@@ -12,8 +12,11 @@ rm -f /usr/local/sbin/huawei-sn6140-audio-fix
 rm -f /etc/systemd/system/huawei-sn6140-audio-fix.service
 rm -f /etc/systemd/system/huawei-sn6140-audio-fix.timer
 rm -f /etc/systemd/system-sleep/huawei-sn6140-audio-fix
+rm -f /etc/modprobe.d/huawei-sn6140-audio.conf
+rm -f /etc/udev/rules.d/99-huawei-sn6140-audio-power.rules
 
 systemctl daemon-reload
 systemctl reset-failed huawei-sn6140-audio-fix.service >/dev/null 2>&1 || true
+udevadm control --reload-rules || true
 
-echo "Uninstalled."
+echo "Uninstalled. Reboot to fully restore kernel module and PCI runtime PM defaults."

@@ -1,10 +1,10 @@
-# 华为 CREF-XX / Conexant SN6140 Linux 内置扬声器无声修复
+# 华为 CREF-XX / Conexant SN6140 Linux 内置扬声器修复
 
 [English README](README.md)
 
-这是一个针对 **HUAWEI CREF-XX / M1010** 笔记本在 Ubuntu/Linux 下内置扬声器无声的问题记录和修复脚本。
+这是一个针对 **HUAWEI CREF-XX / M1010** 笔记本在 Ubuntu/Linux 下内置扬声器无声、开机后过一会无声、合盖唤醒后无声的问题记录和修复脚本。
 
-它不是通用的 “Ubuntu 没声音” 修复。这个方案针对的是：系统已经识别声卡、PipeWire 正常、音量没有静音，但 Conexant SN6140 codec 的扬声器功放在冷启动后没有被正确唤醒。
+它不是通用的 “Ubuntu 没声音” 修复。这个方案针对的是：系统已经识别声卡，PipeWire/WirePlumber 正常，输出设备存在，但 Conexant SN6140 codec / 扬声器功放在冷启动、运行时省电或 suspend/resume 后没有保持正确状态。
 
 ## 已验证环境
 
@@ -15,7 +15,7 @@
 - SKU：C233
 - 主板：CREF-XX-PCB
 - 系统：Ubuntu 26.04 LTS
-- 内核：7.0.0-15-generic
+- 内核：`7.0.0-15-generic`、`7.0.0-27-generic`
 - 音频控制器：Intel Alder Lake PCH-P HDA `8086:51c8`
 - PCI subsystem：Huawei `19e5:3e5f`
 - Codec：Conexant SN6140
@@ -24,7 +24,7 @@
 
 相近机型也可能适用，但请先确认硬件信息。
 
-## 症状
+## 已覆盖症状
 
 典型症状：
 
@@ -32,9 +32,20 @@
 - Windows 下声音正常。
 - `wpctl status` 能看到内置模拟立体声输出。
 - `aplay -l` 能看到 `SN6140 Analog`。
-- `amixer -c 0 scontents` 中 Master、Speaker、PCM 都不是静音。
 - 播放测试音时软件链路看起来正常，但扬声器不响。
 - 手动执行 HDA verb “先关再开”序列后立刻有声音。
+- 开机后起初有声音，但空闲一段时间后无声。
+- 合上笔记本进入 suspend，再打开后外放无声。
+- 插入 3.5mm 耳机后，外放反而恢复正常。
+
+## 根因判断
+
+这个仓库最初解决的是冷启动后 SN6140 扬声器功放没有被正确唤醒的问题。后来在 Ubuntu 26.04 / kernel `7.0.0-27-generic` 上又复现了两个变体：
+
+1. `snd_hda_intel` 的 HDA runtime power saving 会让 codec/功放在空闲后丢状态。
+2. suspend/resume 后 ALSA/WirePlumber 的恢复顺序可能把 `Speaker` mixer 重新置为 `0% [off]`，而插入耳机会触发 jack 事件并刷新路由，所以外放又恢复。
+
+最终修复需要同时处理冷启动、运行时省电和合盖唤醒。
 
 ## 给 AI 的排障方案
 
@@ -45,7 +56,7 @@
 
 它会提醒 AI 先收集证据、确认 SN6140/CREF-XX 硬件，再做可逆的 HDA verb 测试，不要把问题误判为普通 PipeWire 音量问题。
 
-## 无 AI 手动安装方案
+## 安装
 
 先确认依赖：
 
@@ -61,36 +72,65 @@ cd huawei-sn6140-linux-audio-fix
 sudo bash install.sh
 ```
 
-安装后会启用一个 systemd timer：
+安装后建议重启一次：
+
+```bash
+sudo reboot
+```
+
+安装脚本会启用一个 systemd timer：
 
 ```bash
 systemctl status huawei-sn6140-audio-fix.timer
 ```
 
-它会在开机后 20 秒执行修复，并在第一分钟内重复数次。这样做是因为冷启动后声卡/桌面音频初始化可能会覆盖 codec 状态，单次过早执行不稳定。
-
-## 手动临时测试
-
-如果你只想测试当前会话，不想安装 systemd timer：
+并安装一个 suspend/resume hook：
 
 ```bash
-sudo scripts/huawei-sn6140-audio-fix once
+ls -l /etc/systemd/system-sleep/huawei-sn6140-audio-fix
 ```
 
-如果执行后马上有声音，说明你的问题很可能就是 SN6140 扬声器功放冷启动唤醒问题。
-
-## 卸载
+## 状态检查
 
 ```bash
-sudo bash uninstall.sh
+/usr/local/sbin/huawei-sn6140-audio-fix status
+```
+
+预期关键值：
+
+```text
+/sys/module/snd_hda_intel/parameters/power_save=0
+/sys/module/snd_hda_intel/parameters/power_save_controller=N
+/sys/bus/pci/devices/0000:00:1f.3/power/control=on
+```
+
+如果合盖唤醒后无声，`Speaker` 常见异常状态是：
+
+```text
+Speaker: Playback 0 [0%] [-74.00dB] [off]
+```
+
+手动执行一次修复应能恢复：
+
+```bash
+sudo /usr/local/sbin/huawei-sn6140-audio-fix once
 ```
 
 ## 它做了什么
 
-脚本做两类事情：
+脚本和安装器做四类事情：
 
-1. 确保 ALSA 层 Master/Speaker/PCM 没有静音。
-2. 对 SN6140 写入 HDA verb 序列：
+1. 确认机器暴露的是 Conexant SN6140 codec。
+2. 确保 ALSA 层 Master/Speaker/PCM 没有静音，并禁用 `Auto-Mute Mode`。
+3. 关闭 HDA/PCI 音频运行时省电：
+
+```text
+options snd_hda_intel power_save=0 power_save_controller=N
+```
+
+并通过 udev 把 Huawei `8086:51c8 / 19e5:3e5f` 音频控制器的 PCI runtime PM 固定为 `on`。
+
+4. 对 SN6140 写入 HDA verb 序列：
    - 先关闭 speaker EAPD。
    - 启用 GPIO bit 1 的 mask 和 direction。
    - GPIO/route 先切到关闭状态。
@@ -98,13 +138,29 @@ sudo bash uninstall.sh
    - GPIO/route 再切回扬声器状态。
    - 打开 speaker EAPD。
 
-关键是“先关再开”。只写最终状态在冷启动后可能看起来成功，但实际功放仍然不响。
+关键是“先关再开”。只写最终状态在冷启动或唤醒后可能看起来成功，但实际功放仍然不响。
+
+## 开机和合盖唤醒策略
+
+- 开机后 20 秒触发 systemd timer，并在约 2 分钟内重复修复 12 次。
+- 合盖 suspend 后再唤醒时，system-sleep hook 会安排一个延迟任务。
+- 延迟任务会在唤醒后稍等，再每隔数秒重复修复多次，覆盖 ALSA/WirePlumber/桌面会话陆续恢复并覆盖 mixer 的时间窗口。
+
+## 卸载
+
+```bash
+sudo bash uninstall.sh
+sudo reboot
+```
+
+卸载会移除脚本、systemd timer、system-sleep hook、modprobe 配置和 udev 规则。重启后内核模块参数和 PCI runtime PM 默认值才会完全恢复。
 
 ## 注意事项
 
 - 这个脚本不会播放开机音乐，也不包含 `paplay`、`aplay`、`speaker-test` 等播放命令。
 - 如果修复后听到 GNOME 登录旋律，那通常是系统事件音以前因为没声听不到，现在恢复可听了。
 - 这个脚本不会改 Windows 分区、EFI 或 GRUB 默认启动项。
+- 关闭 HDA 音频省电会略微增加空闲功耗，但通常比周期性丢失外放更可接受。
 - 不建议在未确认 SN6140 codec 的机器上使用。
 
 ## 排查命令
@@ -120,19 +176,7 @@ lspci -nnk | grep -iA4 -E 'audio|multimedia'
 aplay -l
 wpctl status
 amixer -c 0 scontents
-sed -n '1,120p' /proc/asound/card0/codec#0
-journalctl -k -b --no-pager | grep -iE 'snd|hda|sof|avs|conexant|SN6140'
+sed -n '1,160p' /proc/asound/card0/codec#0
+journalctl -k -b --no-pager | grep -iE 'snd|hda|sof|avs|conexant|SN6140|suspend|resume'
+journalctl -b --no-pager | grep -iE 'huawei-sn6140|suspend|resume|speaker'
 ```
-
-## 标题建议
-
-如果你要发布到 GitHub，可以用下面的仓库名或文章标题：
-
-- `huawei-sn6140-linux-audio-fix`
-- `Huawei CREF-XX Conexant SN6140 Linux Speaker Fix`
-- `Ubuntu 26.04 Huawei CREF-XX No Sound Fix`
-- `Fix Huawei MateBook CREF-XX SN6140 Speakers on Linux`
-
-## 发布前检查
-
-用这个目录作为根目录创建一个独立 GitHub 仓库。不要把它复制进无关项目仓库里。

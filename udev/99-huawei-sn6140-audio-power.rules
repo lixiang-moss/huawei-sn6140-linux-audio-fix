@@ -1,0 +1,4 @@
+# Huawei CREF-XX Intel Alder Lake PCH-P HDA controller.
+# Keep PCI runtime PM from suspending the audio controller after idle.
+ACTION=="add", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0x51c8", ATTR{subsystem_vendor}=="0x19e5", ATTR{subsystem_device}=="0x3e5f", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="change", SUBSYSTEM=="pci", ATTR{vendor}=="0x8086", ATTR{device}=="0x51c8", ATTR{subsystem_vendor}=="0x19e5", ATTR{subsystem_device}=="0x3e5f", TEST=="power/control", ATTR{power/control}="on"

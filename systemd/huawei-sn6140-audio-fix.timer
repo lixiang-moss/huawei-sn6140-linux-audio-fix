@@ -1,5 +1,5 @@
 [Unit]
-Description=Run Huawei SN6140 audio codec route fix after boot
+Description=Run Huawei SN6140 audio codec fix after boot
 
 [Timer]
 OnBootSec=20s

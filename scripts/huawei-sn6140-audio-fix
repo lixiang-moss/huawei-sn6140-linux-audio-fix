@@ -1,75 +1,176 @@
-#!/bin/sh
+#!/usr/bin/env bash
 set -u
 
-HWDEV="${HWDEV:-/dev/snd/hwC0D0}"
-CARD="${CARD:-0}"
-BOOT_RETRIES="${BOOT_RETRIES:-6}"
-BOOT_DELAY_SECONDS="${BOOT_DELAY_SECONDS:-8}"
+BOOT_RETRIES="${BOOT_RETRIES:-12}"
+BOOT_DELAY_SECONDS="${BOOT_DELAY_SECONDS:-10}"
+RESUME_INITIAL_DELAY="${RESUME_INITIAL_DELAY:-4}"
+RESUME_RETRIES="${RESUME_RETRIES:-10}"
+RESUME_DELAY_SECONDS="${RESUME_DELAY_SECONDS:-6}"
 ALLOW_UNTESTED="${ALLOW_UNTESTED:-0}"
 
 run() {
-    "$@" >/dev/null 2>&1 || true
+  "$@" >/dev/null 2>&1 || true
 }
 
-is_supported_codec() {
-    codec_file="/proc/asound/card${CARD}/codec#0"
-
-    if [ ! -r "$codec_file" ]; then
-        return 1
+find_codec_path() {
+  local f
+  shopt -s nullglob
+  for f in /proc/asound/card*/codec#*; do
+    if grep -q "Codec: Conexant SN6140" "$f" \
+      && grep -q "Vendor Id: 0x14f11f87" "$f"; then
+      echo "$f"
+      return 0
     fi
+  done
+  return 1
+}
 
-    grep -q "Codec: Conexant SN6140" "$codec_file" || return 1
-    grep -q "Vendor Id: 0x14f11f87" "$codec_file" || return 1
-    return 0
+codec_card() {
+  local p="$1"
+  p="${p#/proc/asound/card}"
+  echo "${p%%/*}"
+}
+
+codec_addr() {
+  local p="$1"
+  echo "${p##*codec#}"
+}
+
+set_hda_power_policy() {
+  if [ -w /sys/module/snd_hda_intel/parameters/power_save ]; then
+    echo 0 >/sys/module/snd_hda_intel/parameters/power_save
+  fi
+
+  if [ -w /sys/module/snd_hda_intel/parameters/power_save_controller ]; then
+    echo N >/sys/module/snd_hda_intel/parameters/power_save_controller
+  fi
+
+  local dev
+  for dev in /sys/bus/pci/devices/*; do
+    [ -r "$dev/vendor" ] || continue
+    [ -r "$dev/device" ] || continue
+    [ -r "$dev/subsystem_vendor" ] || continue
+    [ -r "$dev/subsystem_device" ] || continue
+    if [ "$(cat "$dev/vendor")" = "0x8086" ] \
+      && [ "$(cat "$dev/device")" = "0x51c8" ] \
+      && [ "$(cat "$dev/subsystem_vendor")" = "0x19e5" ] \
+      && [ "$(cat "$dev/subsystem_device")" = "0x3e5f" ] \
+      && [ -w "$dev/power/control" ]; then
+      echo on >"$dev/power/control"
+    fi
+  done
 }
 
 apply_fix_once() {
-    if [ ! -e "$HWDEV" ]; then
-        echo "SN6140 hwdep device not found: $HWDEV" >&2
-        return 0
+  local codec_path card addr hwdev
+
+  if ! codec_path="$(find_codec_path)"; then
+    echo "SN6140 codec not found." >&2
+    if [ "$ALLOW_UNTESTED" != "1" ]; then
+      return 0
     fi
+    card="${CARD:-0}"
+    addr="${ADDR:-0}"
+  else
+    card="${CARD:-$(codec_card "$codec_path")}"
+    addr="${ADDR:-$(codec_addr "$codec_path")}"
+  fi
 
-    if ! is_supported_codec && [ "$ALLOW_UNTESTED" != "1" ]; then
-        echo "This does not look like the tested Conexant SN6140 codec on card $CARD." >&2
-        echo "Set ALLOW_UNTESTED=1 only if you know your hardware needs this HDA verb sequence." >&2
-        return 0
+  hwdev="${HWDEV:-/dev/snd/hwC${card}D${addr}}"
+  if [ ! -e "$hwdev" ]; then
+    echo "SN6140 hwdep device not found: $hwdev" >&2
+    return 0
+  fi
+
+  set_hda_power_policy
+
+  run amixer -q -c "$card" set Master 95% unmute
+  run amixer -q -c "$card" set Speaker 100% unmute
+  run amixer -q -c "$card" set PCM 100%
+  run amixer -q -c "$card" set "Auto-Mute Mode" Disabled
+
+  run hda-verb "$hwdev" 0x01 SET_POWER_STATE 0x0
+  run hda-verb "$hwdev" 0x10 SET_POWER_STATE 0x0
+  run hda-verb "$hwdev" 0x11 SET_POWER_STATE 0x0
+  run hda-verb "$hwdev" 0x16 SET_POWER_STATE 0x0
+  run hda-verb "$hwdev" 0x17 SET_POWER_STATE 0x0
+
+  # Huawei CREF-XX can leave the SN6140 speaker amp latched off.
+  # The important part is the off-then-on transition, not only the final state.
+  run hda-verb "$hwdev" 0x17 SET_EAPD_BTLENABLE 0x0
+  run hda-verb "$hwdev" 0x01 SET_GPIO_MASK 0x2
+  run hda-verb "$hwdev" 0x01 SET_GPIO_DIRECTION 0x2
+  run hda-verb "$hwdev" 0x01 SET_GPIO_DATA 0x0
+  run hda-verb "$hwdev" 0x16 SET_CONNECT_SEL 0x0
+  sleep 0.4
+  run hda-verb "$hwdev" 0x01 SET_GPIO_MASK 0x2
+  run hda-verb "$hwdev" 0x01 SET_GPIO_DIRECTION 0x2
+  run hda-verb "$hwdev" 0x01 SET_GPIO_DATA 0x2
+  run hda-verb "$hwdev" 0x16 SET_CONNECT_SEL 0x1
+  run hda-verb "$hwdev" 0x17 SET_EAPD_BTLENABLE 0x2
+
+  set_hda_power_policy
+}
+
+apply_boot_fix() {
+  local i=1
+  while [ "$i" -le "$BOOT_RETRIES" ]; do
+    echo "Applying Huawei SN6140 audio fix attempt $i/$BOOT_RETRIES"
+    apply_fix_once
+    i=$((i + 1))
+    if [ "$i" -le "$BOOT_RETRIES" ]; then
+      sleep "$BOOT_DELAY_SECONDS"
     fi
+  done
+}
 
-    run amixer -q -c "$CARD" set Master 95% unmute
-    run amixer -q -c "$CARD" set Speaker 100% unmute
-    run amixer -q -c "$CARD" set PCM 100%
-    run amixer -q -c "$CARD" set "Auto-Mute Mode" Disabled
+apply_resume_fix() {
+  local i=1
+  sleep "$RESUME_INITIAL_DELAY"
+  while [ "$i" -le "$RESUME_RETRIES" ]; do
+    echo "Applying Huawei SN6140 resume fix attempt $i/$RESUME_RETRIES"
+    apply_fix_once
+    i=$((i + 1))
+    if [ "$i" -le "$RESUME_RETRIES" ]; then
+      sleep "$RESUME_DELAY_SECONDS"
+    fi
+  done
+}
 
-    # Cold boots on Huawei CREF-XX can leave the SN6140 speaker amplifier asleep.
-    # Flip the route off and back on so the GPIO/EAPD state takes effect.
-    run hda-verb "$HWDEV" 0x17 SET_EAPD_BTLENABLE 0x0
-    run hda-verb "$HWDEV" 0x01 SET_GPIO_MASK 0x2
-    run hda-verb "$HWDEV" 0x01 SET_GPIO_DIRECTION 0x2
-    run hda-verb "$HWDEV" 0x01 SET_GPIO_DATA 0x0
-    run hda-verb "$HWDEV" 0x16 SET_CONNECT_SEL 0x0
-    sleep 0.4
-    run hda-verb "$HWDEV" 0x01 SET_GPIO_MASK 0x2
-    run hda-verb "$HWDEV" 0x01 SET_GPIO_DIRECTION 0x2
-    run hda-verb "$HWDEV" 0x01 SET_GPIO_DATA 0x2
-    run hda-verb "$HWDEV" 0x16 SET_CONNECT_SEL 0x1
-    run hda-verb "$HWDEV" 0x17 SET_EAPD_BTLENABLE 0x2
+show_status() {
+  local codec_path card
+  codec_path="$(find_codec_path || true)"
+  if [ -n "$codec_path" ]; then
+    card="${CARD:-$(codec_card "$codec_path")}"
+  else
+    card="${CARD:-0}"
+  fi
+  echo "codec=${codec_path:-not-found}"
+  for p in /sys/module/snd_hda_intel/parameters/power_save /sys/module/snd_hda_intel/parameters/power_save_controller; do
+    [ -r "$p" ] && echo "$p=$(cat "$p")"
+  done
+  for dev in /sys/bus/pci/devices/*; do
+    [ -r "$dev/vendor" ] || continue
+    [ "$(cat "$dev/vendor")" = "0x8086" ] || continue
+    [ -r "$dev/device" ] && [ "$(cat "$dev/device")" = "0x51c8" ] || continue
+    [ -r "$dev/power/control" ] && echo "$dev/power/control=$(cat "$dev/power/control")"
+  done
+  amixer -c "$card" scontents 2>/dev/null | grep -A8 -E "Simple mixer control '(Speaker|Headphone|Auto-Mute Mode|Master)'" || true
 }
 
 case "${1:-once}" in
-    boot)
-        i=1
-        while [ "$i" -le "$BOOT_RETRIES" ]; do
-            echo "Applying Huawei SN6140 audio fix attempt $i/$BOOT_RETRIES"
-            apply_fix_once
-            i=$((i + 1))
-            if [ "$i" -le "$BOOT_RETRIES" ]; then
-                sleep "$BOOT_DELAY_SECONDS"
-            fi
-        done
-        ;;
-    once|*)
-        apply_fix_once
-        ;;
+  boot)
+    apply_boot_fix
+    ;;
+  resume)
+    apply_resume_fix
+    ;;
+  status)
+    show_status
+    ;;
+  once|*)
+    apply_fix_once
+    ;;
 esac
 
 exit 0
