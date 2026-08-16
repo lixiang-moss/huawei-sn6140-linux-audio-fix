@@ -1,8 +1,8 @@
-# 华为 CREF-XX / Conexant SN6140 Linux 内置扬声器修复
+# 华为 MateBook 16D / CREF-XX / Conexant SN6140 Ubuntu 26.04 内置扬声器修复
 
 [English README](README.md)
 
-这是一个针对 **HUAWEI CREF-XX / M1010** 笔记本在 Ubuntu/Linux 下内置扬声器无声、开机后过一会无声、合盖唤醒后无声的问题记录和修复脚本。
+这是一个针对 **华为 MateBook 16D** 笔记本在 **Ubuntu 26.04** 下内置扬声器无声、开机后过一会无声、合盖唤醒后无声的问题记录和修复脚本。该机型在 Linux DMI 信息中显示为 **HUAWEI CREF-XX / M1010 / C233 / CREF-XX-PCB**。
 
 它不是通用的 “Ubuntu 没声音” 修复。这个方案针对的是：系统已经识别声卡，PipeWire/WirePlumber 正常，输出设备存在，但 Conexant SN6140 codec / 扬声器功放在冷启动、运行时省电或 suspend/resume 后没有保持正确状态。
 
@@ -10,6 +10,7 @@
 
 已在以下环境验证：
 
+- 常见机型名：华为 MateBook 16D
 - 机器：HUAWEI CREF-XX
 - 产品版本：M1010
 - SKU：C233

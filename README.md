@@ -1,8 +1,8 @@
-# Huawei CREF-XX / Conexant SN6140 Linux Speaker Fix
+# Huawei MateBook 16D / CREF-XX / Conexant SN6140 Ubuntu 26.04 Speaker Fix
 
 [中文 README](README.zh-CN.md)
 
-This repository documents and automates a workaround for a **HUAWEI CREF-XX / M1010** laptop where the internal speakers are silent on Ubuntu/Linux, stop working after idle, or stop working after lid suspend/resume.
+This repository documents and automates a workaround for a **Huawei MateBook 16D** laptop where the internal speakers are silent on **Ubuntu 26.04**, stop working after idle, or stop working after lid suspend/resume. On Linux, this machine reports DMI identifiers as **HUAWEI CREF-XX / M1010 / C233 / CREF-XX-PCB**.
 
 This is not a generic "Ubuntu no sound" fix. It targets a specific failure mode: the audio device is detected, PipeWire/WirePlumber is running, the output device exists, but the Conexant SN6140 codec / speaker amplifier does not keep the correct state after cold boot, runtime power saving, or suspend/resume.
 
@@ -10,6 +10,7 @@ This is not a generic "Ubuntu no sound" fix. It targets a specific failure mode:
 
 Verified on:
 
+- Common model name: Huawei MateBook 16D
 - Machine: HUAWEI CREF-XX
 - Product version: M1010
 - SKU: C233

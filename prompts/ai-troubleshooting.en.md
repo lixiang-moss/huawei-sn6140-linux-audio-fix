@@ -1,10 +1,11 @@
 # AI Troubleshooting Prompt
 
-You are a Linux audio troubleshooting expert. Help me debug an internal speaker no-sound issue on a Huawei laptop running Ubuntu/Linux. The speakers may be silent at boot, stop working after idle, or stop working after lid suspend/resume. This may not be a PipeWire volume issue; it may be a Conexant SN6140 codec / speaker amplifier state-loss issue.
+You are a Linux audio troubleshooting expert. Help me debug an internal speaker no-sound issue on a Huawei MateBook 16D running Ubuntu 26.04. The speakers may be silent at boot, stop working after idle, or stop working after lid suspend/resume. This may not be a PipeWire volume issue; it may be a Conexant SN6140 codec / speaker amplifier state-loss issue.
 
 Known facts or things to verify:
 
-- The machine may be HUAWEI CREF-XX / M1010 / SKU C233 / CREF-XX-PCB.
+- The common model name may be Huawei MateBook 16D.
+- Linux DMI may report the machine as HUAWEI CREF-XX / M1010 / SKU C233 / CREF-XX-PCB.
 - The audio controller may be Intel Alder Lake PCH-P HDA, PCI ID `8086:51c8`, Huawei subsystem `19e5:3e5f`.
 - The codec may be Conexant SN6140, `Vendor Id: 0x14f11f87`, `Subsystem Id: 0x19e53281`.
 - The system may be Ubuntu 26.04. PipeWire/WirePlumber may be running normally, and `wpctl status` may show an analog stereo sink.

@@ -1,10 +1,11 @@
 # 给 AI 的排障 Prompt
 
-你是一位 Linux 音频排障专家。请帮我排查一台华为笔记本在 Ubuntu/Linux 下内置扬声器无声、空闲后无声、或合盖唤醒后无声的问题。请注意这可能不是 PipeWire 音量问题，而是 Conexant SN6140 codec/功放状态丢失问题。
+你是一位 Linux 音频排障专家。请帮我排查一台华为 MateBook 16D 在 Ubuntu 26.04 下内置扬声器无声、空闲后无声、或合盖唤醒后无声的问题。请注意这可能不是 PipeWire 音量问题，而是 Conexant SN6140 codec/功放状态丢失问题。
 
 已知或需要重点确认的信息：
 
-- 机器可能是 HUAWEI CREF-XX / M1010 / SKU C233 / CREF-XX-PCB。
+- 常见机型名可能是华为 MateBook 16D。
+- Linux DMI 信息可能显示为 HUAWEI CREF-XX / M1010 / SKU C233 / CREF-XX-PCB。
 - 声卡可能是 Intel Alder Lake PCH-P HDA，PCI ID `8086:51c8`，Huawei subsystem `19e5:3e5f`。
 - codec 可能是 Conexant SN6140，`Vendor Id: 0x14f11f87`，`Subsystem Id: 0x19e53281`。
 - 系统可能是 Ubuntu 26.04，PipeWire/WirePlumber 正常运行，`wpctl status` 能看到模拟立体声输出。
