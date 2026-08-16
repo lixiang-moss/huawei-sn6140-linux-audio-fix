@@ -1,7 +1,19 @@
 #!/bin/sh
 
 case "$1" in
-    post)
-        /usr/local/sbin/huawei-sn6140-audio-fix once
-        ;;
+  post)
+    unit="huawei-sn6140-audio-resume-fix-$(date +%s)"
+    if command -v systemd-run >/dev/null 2>&1; then
+      if ! systemd-run \
+        --unit="$unit" \
+        --collect \
+        --on-active=2s \
+        --timer-property=AccuracySec=1s \
+        /usr/local/sbin/huawei-sn6140-audio-fix resume >/dev/null 2>&1; then
+        /usr/local/sbin/huawei-sn6140-audio-fix resume >/dev/null 2>&1 &
+      fi
+    else
+      /usr/local/sbin/huawei-sn6140-audio-fix resume >/dev/null 2>&1 &
+    fi
+    ;;
 esac

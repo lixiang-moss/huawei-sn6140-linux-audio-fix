@@ -1,7 +1,7 @@
 [Unit]
-Description=Huawei SN6140 audio codec route fix
+Description=Huawei SN6140 audio codec route and power fix
 After=sound.target systemd-user-sessions.service
-ConditionPathExists=/dev/snd/hwC0D0
+ConditionPathExistsGlob=/proc/asound/card*/codec#*
 
 [Service]
 Type=oneshot
