@@ -9,6 +9,7 @@ Known facts or things to verify:
 - The audio controller may be Intel Alder Lake PCH-P HDA, PCI ID `8086:51c8`, Huawei subsystem `19e5:3e5f`.
 - The codec may be Conexant SN6140, `Vendor Id: 0x14f11f87`, `Subsystem Id: 0x19e53281`.
 - The system may be Ubuntu 26.04. PipeWire/WirePlumber may be running normally, and `wpctl status` may show an analog stereo sink.
+- Reproduced kernels include `7.0.0-15-generic`, `7.0.0-27-generic`, and `7.0.0-29-generic`.
 - ALSA Master/Speaker/PCM may look correct, but the internal speakers still produce no sound.
 - Speakers may work after boot, then stop working after idle.
 - Speakers may stop working after lid suspend/resume, and plugging in a 3.5 mm headset may make the internal speakers work again.
@@ -26,6 +27,9 @@ Please proceed like this:
    - `cat /sys/module/snd_hda_intel/parameters/power_save /sys/module/snd_hda_intel/parameters/power_save_controller`
    - `cat /sys/bus/pci/devices/0000:00:1f.3/power/control`
    - `journalctl -k -b --no-pager | grep -iE 'snd|hda|sof|avs|conexant|SN6140|suspend|resume'`
+   - `journalctl -b --no-pager | grep -iE 'huawei-sn6140|systemd-sleep|suspend|resume'`
+   - `ls -l /usr/lib/systemd/system-sleep/huawei-sn6140-audio-fix /etc/systemd/system-sleep/huawei-sn6140-audio-fix 2>&1`
+   - `systemctl status huawei-sn6140-audio-resume-fix.service --no-pager`
 2. If the machine is confirmed as HUAWEI CREF-XX + Conexant SN6140, and the audio stack is healthy but the speakers are silent, test a reversible HDA verb sequence.
 3. The important part is not only writing the final target state. The speaker amplifier may need an off-then-on wake sequence:
    - Disable speaker EAPD first.
@@ -40,8 +44,14 @@ Please proceed like this:
    - `snd_hda_intel power_save=0`
    - `snd_hda_intel power_save_controller=N`
    - `power/control=on` for the Huawei `8086:51c8 / 19e5:3e5f` PCI audio controller
-5. If speakers stop working after lid resume, compare `amixer -c 0 scontents` before and after resume. A common bad state is `Speaker` becoming `0% [off]` while `Headphone` remains `[on]`. Use a delayed, repeated system-sleep `post` fix so ALSA/WirePlumber restore does not overwrite the speaker mixer after the first attempt.
-6. State the scope and risk clearly: this is not a generic Ubuntu no-sound fix. It is for the same or very similar Huawei SN6140 codec routing issue.
-7. If the user hears a login melody after the fix, that is usually GNOME event sounds becoming audible again. The fix script should not include playback commands like `paplay`, `aplay`, or `speaker-test`.
+5. If speakers stop working after lid resume, do not rely only on mixer state:
+   - In some failures, `Speaker` becomes `0% [off]`. After a long suspend it may instead remain `100% [on]`, with the codec in D0, EAPD at `0x2`, and GPIO data at 1, while the external amplifier is still unresponsive.
+   - If inserting a headset restores speaker output, treat the jack-state edge as evidence that routing or amplifier initialization was retriggered; do not assume the ports are simply reversed.
+   - On Ubuntu 26.04, systemd executes hooks from `/usr/lib/systemd/system-sleep/`. Do not install the active hook only in `/etc/systemd/system-sleep/`.
+   - The `post` hook should quickly start a dedicated root systemd service. That service should wait briefly and repeat the repair to cover device and desktop audio restoration timing.
+   - Prove that both stages ran with `journalctl -b -t huawei-sn6140-audio-sleep` and `journalctl -b -u huawei-sn6140-audio-resume-fix.service`. A single short lid-close test that happens to retain sound is not sufficient validation.
+6. `hda-verb` requires root privileges. Do not hide failures from critical commands; a missing codec, missing hwdep device, or failed HDA verb write must produce a non-zero script and systemd service result.
+7. State the scope and risk clearly: this is not a generic Ubuntu no-sound fix. It is for the same or very similar Huawei SN6140 codec routing issue.
+8. If the user hears a login melody after the fix, that is usually GNOME event sounds becoming audible again. The fix script should not include playback commands like `paplay`, `aplay`, or `speaker-test`.
 
 Explain what evidence you see at each step, why you are making each decision, and provide a rollback path.
