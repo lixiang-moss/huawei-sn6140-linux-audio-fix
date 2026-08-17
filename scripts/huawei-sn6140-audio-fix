@@ -8,8 +8,15 @@ RESUME_RETRIES="${RESUME_RETRIES:-10}"
 RESUME_DELAY_SECONDS="${RESUME_DELAY_SECONDS:-6}"
 ALLOW_UNTESTED="${ALLOW_UNTESTED:-0}"
 
-run() {
+run_optional() {
   "$@" >/dev/null 2>&1 || true
+}
+
+run_required() {
+  if ! "$@" >/dev/null 2>&1; then
+    echo "Required command failed: $*" >&2
+    return 1
+  fi
 }
 
 find_codec_path() {
@@ -62,12 +69,17 @@ set_hda_power_policy() {
 }
 
 apply_fix_once() {
-  local codec_path card addr hwdev
+  local codec_path card addr hwdev failed=0
+
+  if [ "$(id -u)" -ne 0 ]; then
+    echo "The audio repair must run as root; use sudo." >&2
+    return 1
+  fi
 
   if ! codec_path="$(find_codec_path)"; then
     echo "SN6140 codec not found." >&2
     if [ "$ALLOW_UNTESTED" != "1" ]; then
-      return 0
+      return 1
     fi
     card="${CARD:-0}"
     addr="${ADDR:-0}"
@@ -79,62 +91,69 @@ apply_fix_once() {
   hwdev="${HWDEV:-/dev/snd/hwC${card}D${addr}}"
   if [ ! -e "$hwdev" ]; then
     echo "SN6140 hwdep device not found: $hwdev" >&2
-    return 0
+    return 1
   fi
 
   set_hda_power_policy
 
-  run amixer -q -c "$card" set Master 95% unmute
-  run amixer -q -c "$card" set Speaker 100% unmute
-  run amixer -q -c "$card" set PCM 100%
-  run amixer -q -c "$card" set "Auto-Mute Mode" Disabled
+  run_optional amixer -q -c "$card" set Master 95% unmute
+  run_optional amixer -q -c "$card" set Speaker 100% unmute
+  run_optional amixer -q -c "$card" set PCM 100%
+  run_optional amixer -q -c "$card" set "Auto-Mute Mode" Disabled
 
-  run hda-verb "$hwdev" 0x01 SET_POWER_STATE 0x0
-  run hda-verb "$hwdev" 0x10 SET_POWER_STATE 0x0
-  run hda-verb "$hwdev" 0x11 SET_POWER_STATE 0x0
-  run hda-verb "$hwdev" 0x16 SET_POWER_STATE 0x0
-  run hda-verb "$hwdev" 0x17 SET_POWER_STATE 0x0
+  run_required hda-verb "$hwdev" 0x01 SET_POWER_STATE 0x0 || failed=1
+  run_required hda-verb "$hwdev" 0x10 SET_POWER_STATE 0x0 || failed=1
+  run_required hda-verb "$hwdev" 0x11 SET_POWER_STATE 0x0 || failed=1
+  run_required hda-verb "$hwdev" 0x16 SET_POWER_STATE 0x0 || failed=1
+  run_required hda-verb "$hwdev" 0x17 SET_POWER_STATE 0x0 || failed=1
 
   # Huawei CREF-XX can leave the SN6140 speaker amp latched off.
   # The important part is the off-then-on transition, not only the final state.
-  run hda-verb "$hwdev" 0x17 SET_EAPD_BTLENABLE 0x0
-  run hda-verb "$hwdev" 0x01 SET_GPIO_MASK 0x2
-  run hda-verb "$hwdev" 0x01 SET_GPIO_DIRECTION 0x2
-  run hda-verb "$hwdev" 0x01 SET_GPIO_DATA 0x0
-  run hda-verb "$hwdev" 0x16 SET_CONNECT_SEL 0x0
+  run_required hda-verb "$hwdev" 0x17 SET_EAPD_BTLENABLE 0x0 || failed=1
+  run_required hda-verb "$hwdev" 0x01 SET_GPIO_MASK 0x2 || failed=1
+  run_required hda-verb "$hwdev" 0x01 SET_GPIO_DIRECTION 0x2 || failed=1
+  run_required hda-verb "$hwdev" 0x01 SET_GPIO_DATA 0x0 || failed=1
+  run_required hda-verb "$hwdev" 0x16 SET_CONNECT_SEL 0x0 || failed=1
   sleep 0.4
-  run hda-verb "$hwdev" 0x01 SET_GPIO_MASK 0x2
-  run hda-verb "$hwdev" 0x01 SET_GPIO_DIRECTION 0x2
-  run hda-verb "$hwdev" 0x01 SET_GPIO_DATA 0x2
-  run hda-verb "$hwdev" 0x16 SET_CONNECT_SEL 0x1
-  run hda-verb "$hwdev" 0x17 SET_EAPD_BTLENABLE 0x2
+  run_required hda-verb "$hwdev" 0x01 SET_GPIO_MASK 0x2 || failed=1
+  run_required hda-verb "$hwdev" 0x01 SET_GPIO_DIRECTION 0x2 || failed=1
+  run_required hda-verb "$hwdev" 0x01 SET_GPIO_DATA 0x2 || failed=1
+  run_required hda-verb "$hwdev" 0x16 SET_CONNECT_SEL 0x1 || failed=1
+  run_required hda-verb "$hwdev" 0x17 SET_EAPD_BTLENABLE 0x2 || failed=1
 
   set_hda_power_policy
+  return "$failed"
 }
 
 apply_boot_fix() {
-  local i=1
+  local i=1 succeeded=0
   while [ "$i" -le "$BOOT_RETRIES" ]; do
     echo "Applying Huawei SN6140 audio fix attempt $i/$BOOT_RETRIES"
-    apply_fix_once
+    if apply_fix_once; then
+      succeeded=1
+    fi
     i=$((i + 1))
     if [ "$i" -le "$BOOT_RETRIES" ]; then
       sleep "$BOOT_DELAY_SECONDS"
     fi
   done
+  [ "$succeeded" -eq 1 ]
 }
 
 apply_resume_fix() {
-  local i=1
+  local i=1 succeeded=0
   sleep "$RESUME_INITIAL_DELAY"
   while [ "$i" -le "$RESUME_RETRIES" ]; do
     echo "Applying Huawei SN6140 resume fix attempt $i/$RESUME_RETRIES"
-    apply_fix_once
+    if apply_fix_once; then
+      succeeded=1
+    fi
     i=$((i + 1))
     if [ "$i" -le "$RESUME_RETRIES" ]; then
       sleep "$RESUME_DELAY_SECONDS"
     fi
   done
+  [ "$succeeded" -eq 1 ]
 }
 
 show_status() {
@@ -158,19 +177,20 @@ show_status() {
   amixer -c "$card" scontents 2>/dev/null | grep -A8 -E "Simple mixer control '(Speaker|Headphone|Auto-Mute Mode|Master)'" || true
 }
 
+result=0
 case "${1:-once}" in
   boot)
-    apply_boot_fix
+    apply_boot_fix || result=$?
     ;;
   resume)
-    apply_resume_fix
+    apply_resume_fix || result=$?
     ;;
   status)
-    show_status
+    show_status || result=$?
     ;;
   once|*)
-    apply_fix_once
+    apply_fix_once || result=$?
     ;;
 esac
 
-exit 0
+exit "$result"

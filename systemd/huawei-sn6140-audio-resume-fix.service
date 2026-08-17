@@ -1,0 +1,9 @@
+[Unit]
+Description=Huawei SN6140 delayed audio repair after resume
+After=sound.target
+ConditionPathExistsGlob=/proc/asound/card*/codec#*
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/huawei-sn6140-audio-fix resume
+TimeoutStartSec=90s

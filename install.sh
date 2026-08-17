@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_NAME="huawei-sn6140-audio-fix"
+RESUME_SERVICE_NAME="huawei-sn6140-audio-resume-fix"
 
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
   exec sudo bash "$0" "$@"
@@ -68,12 +69,17 @@ check_hardware
 install -m 0755 "$ROOT_DIR/scripts/huawei-sn6140-audio-fix" "/usr/local/sbin/$SCRIPT_NAME"
 install -m 0644 "$ROOT_DIR/systemd/huawei-sn6140-audio-fix.service" "/etc/systemd/system/$SCRIPT_NAME.service"
 install -m 0644 "$ROOT_DIR/systemd/huawei-sn6140-audio-fix.timer" "/etc/systemd/system/$SCRIPT_NAME.timer"
-install -m 0755 "$ROOT_DIR/systemd/huawei-sn6140-audio-fix-sleep" "/etc/systemd/system-sleep/$SCRIPT_NAME"
+install -m 0644 "$ROOT_DIR/systemd/huawei-sn6140-audio-resume-fix.service" "/etc/systemd/system/$RESUME_SERVICE_NAME.service"
+install -d -m 0755 /usr/lib/systemd/system-sleep
+install -m 0755 "$ROOT_DIR/systemd/huawei-sn6140-audio-fix-sleep" "/usr/lib/systemd/system-sleep/$SCRIPT_NAME"
+# Older versions used this unsupported location on Ubuntu 26.04.
+rm -f "/etc/systemd/system-sleep/$SCRIPT_NAME"
 install -m 0644 "$ROOT_DIR/modprobe.d/huawei-sn6140-audio.conf" /etc/modprobe.d/huawei-sn6140-audio.conf
 install -m 0644 "$ROOT_DIR/udev/99-huawei-sn6140-audio-power.rules" /etc/udev/rules.d/99-huawei-sn6140-audio-power.rules
 
 systemctl daemon-reload
 systemctl disable huawei-sn6140-audio-fix.service >/dev/null 2>&1 || true
+systemctl stop "$RESUME_SERVICE_NAME.service" >/dev/null 2>&1 || true
 systemctl enable --now huawei-sn6140-audio-fix.timer
 systemctl restart huawei-sn6140-audio-fix.timer
 

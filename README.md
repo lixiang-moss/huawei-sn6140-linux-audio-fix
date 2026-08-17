@@ -4,6 +4,8 @@
 
 This repository documents and automates a workaround for a **Huawei MateBook 16D** laptop where the internal speakers are silent on **Ubuntu 26.04**, stop working after idle, or stop working after lid suspend/resume. On Linux, this machine reports DMI identifiers as **HUAWEI CREF-XX / M1010 / C233 / CREF-XX-PCB**.
 
+The default installer now deploys **v4**, which fixes the systemd sleep hook used for post-resume speaker recovery.
+
 This is not a generic "Ubuntu no sound" fix. It targets a specific failure mode: the audio device is detected, PipeWire/WirePlumber is running, the output device exists, but the Conexant SN6140 codec / speaker amplifier does not keep the correct state after cold boot, runtime power saving, or suspend/resume.
 
 ## Verified Hardware
@@ -16,7 +18,7 @@ Verified on:
 - SKU: C233
 - Board: CREF-XX-PCB
 - OS: Ubuntu 26.04 LTS
-- Kernels: `7.0.0-15-generic`, `7.0.0-27-generic`
+- Kernels: `7.0.0-15-generic`, `7.0.0-27-generic`, `7.0.0-29-generic`
 - Audio controller: Intel Alder Lake PCH-P HDA `8086:51c8`
 - PCI subsystem: Huawei `19e5:3e5f`
 - Codec: Conexant SN6140
@@ -41,12 +43,14 @@ Typical symptoms:
 
 ## Root Cause
 
-This project originally fixed a cold-boot issue where the SN6140 speaker amplifier was not woken correctly. Later testing on Ubuntu 26.04 / kernel `7.0.0-27-generic` exposed two related variants:
+This project originally fixed a cold-boot issue where the SN6140 speaker amplifier was not woken correctly. Later testing on Ubuntu 26.04 / kernels `7.0.0-27-generic` and `7.0.0-29-generic` exposed two related variants:
 
 1. HDA runtime power saving in `snd_hda_intel` can let the codec / amplifier lose state after idle.
-2. After suspend/resume, ALSA/WirePlumber restore ordering can set the `Speaker` mixer back to `0% [off]`. Plugging in a headset triggers a jack event and refreshes routing, so speakers start working again.
+2. A long suspend can make the external SN6140 speaker amplifier lose its hardware latch state. The codec, PipeWire, `Speaker` mixer, and software volume may all look correct while the physical amplifier remains silent. Inserting a headset creates a jack-state edge and reinitializes the route, which can make the speakers work again.
 
 The final workaround handles cold boot, runtime power saving, and lid suspend/resume together.
+
+The v3 workaround diagnosed the resume failure correctly but installed its hook in `/etc/systemd/system-sleep/`. Ubuntu 26.04 systemd only executes hooks from `/usr/lib/systemd/system-sleep/`, so the v3 resume repair never ran. A short lid-close test happened to pass because the amplifier had not fully lost power; an overnight suspend made the missing hook reproducible.
 
 ## AI-Assisted Troubleshooting
 
@@ -85,10 +89,11 @@ The installer enables a systemd timer:
 systemctl status huawei-sn6140-audio-fix.timer
 ```
 
-It also installs a suspend/resume hook:
+It also installs a suspend/resume hook and a dedicated repair service:
 
 ```bash
-ls -l /etc/systemd/system-sleep/huawei-sn6140-audio-fix
+ls -l /usr/lib/systemd/system-sleep/huawei-sn6140-audio-fix
+systemctl status huawei-sn6140-audio-resume-fix.service
 ```
 
 ## Status Check
@@ -105,7 +110,7 @@ Expected key values:
 /sys/bus/pci/devices/0000:00:1f.3/power/control=on
 ```
 
-After a failed lid resume, the common bad state is:
+In some failed resumes, `Speaker` changes to:
 
 ```text
 Speaker: Playback 0 [0%] [-74.00dB] [off]
@@ -116,6 +121,8 @@ Running the fix once should restore it:
 ```bash
 sudo /usr/local/sbin/huawei-sn6140-audio-fix once
 ```
+
+After a long suspend on `7.0.0-29-generic`, `Speaker` may still report `100% [on]` and all HDA power settings may look correct while the external amplifier is unresponsive. The same HDA off-then-on sequence is still required.
 
 ## What It Does
 
@@ -144,8 +151,14 @@ The important part is the off-then-on sequence. Writing only the final target st
 ## Boot and Resume Strategy
 
 - A systemd timer starts 20 seconds after boot and repeats the fix 12 times over about 2 minutes.
-- A system-sleep hook schedules a delayed transient unit after lid suspend/resume.
+- After lid suspend/resume, a hook in systemd's active hook directory starts the dedicated `huawei-sn6140-audio-resume-fix.service`.
 - The delayed resume fix waits briefly, then repeats several times to cover the window where ALSA/WirePlumber/desktop session restore may overwrite the speaker mixer.
+- Both the hook and repair service write to the journal, so a resume can be verified with:
+
+```bash
+journalctl -b -t huawei-sn6140-audio-sleep
+journalctl -b -u huawei-sn6140-audio-resume-fix.service
+```
 
 ## Uninstall
 

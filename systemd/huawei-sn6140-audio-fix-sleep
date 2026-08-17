@@ -1,19 +1,16 @@
 #!/bin/sh
 
+TAG="huawei-sn6140-audio-sleep"
+
 case "$1" in
+  pre)
+    logger -t "$TAG" "pre $2"
+    ;;
   post)
-    unit="huawei-sn6140-audio-resume-fix-$(date +%s)"
-    if command -v systemd-run >/dev/null 2>&1; then
-      if ! systemd-run \
-        --unit="$unit" \
-        --collect \
-        --on-active=2s \
-        --timer-property=AccuracySec=1s \
-        /usr/local/sbin/huawei-sn6140-audio-fix resume >/dev/null 2>&1; then
-        /usr/local/sbin/huawei-sn6140-audio-fix resume >/dev/null 2>&1 &
-      fi
-    else
-      /usr/local/sbin/huawei-sn6140-audio-fix resume >/dev/null 2>&1 &
+    logger -t "$TAG" "post $2; queueing resume repair"
+    if ! systemctl restart --no-block huawei-sn6140-audio-resume-fix.service; then
+      logger -p user.err -t "$TAG" "failed to queue resume repair"
+      exit 1
     fi
     ;;
 esac

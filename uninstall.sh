@@ -7,11 +7,14 @@ fi
 
 systemctl disable --now huawei-sn6140-audio-fix.timer >/dev/null 2>&1 || true
 systemctl stop huawei-sn6140-audio-fix.service >/dev/null 2>&1 || true
+systemctl stop huawei-sn6140-audio-resume-fix.service >/dev/null 2>&1 || true
 
 rm -f /usr/local/sbin/huawei-sn6140-audio-fix
 rm -f /etc/systemd/system/huawei-sn6140-audio-fix.service
 rm -f /etc/systemd/system/huawei-sn6140-audio-fix.timer
+rm -f /etc/systemd/system/huawei-sn6140-audio-resume-fix.service
 rm -f /etc/systemd/system-sleep/huawei-sn6140-audio-fix
+rm -f /usr/lib/systemd/system-sleep/huawei-sn6140-audio-fix
 rm -f /etc/modprobe.d/huawei-sn6140-audio.conf
 rm -f /etc/udev/rules.d/99-huawei-sn6140-audio-power.rules
 

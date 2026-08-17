@@ -4,6 +4,8 @@
 
 这是一个针对 **华为 MateBook 16D** 笔记本在 **Ubuntu 26.04** 下内置扬声器无声、开机后过一会无声、合盖唤醒后无声的问题记录和修复脚本。该机型在 Linux DMI 信息中显示为 **HUAWEI CREF-XX / M1010 / C233 / CREF-XX-PCB**。
 
+当前默认安装方案为 **v4**，修正了旧版休眠恢复钩子未被 systemd 执行的问题。
+
 它不是通用的 “Ubuntu 没声音” 修复。这个方案针对的是：系统已经识别声卡，PipeWire/WirePlumber 正常，输出设备存在，但 Conexant SN6140 codec / 扬声器功放在冷启动、运行时省电或 suspend/resume 后没有保持正确状态。
 
 ## 已验证环境
@@ -16,7 +18,7 @@
 - SKU：C233
 - 主板：CREF-XX-PCB
 - 系统：Ubuntu 26.04 LTS
-- 内核：`7.0.0-15-generic`、`7.0.0-27-generic`
+- 内核：`7.0.0-15-generic`、`7.0.0-27-generic`、`7.0.0-29-generic`
 - 音频控制器：Intel Alder Lake PCH-P HDA `8086:51c8`
 - PCI subsystem：Huawei `19e5:3e5f`
 - Codec：Conexant SN6140
@@ -41,12 +43,14 @@
 
 ## 根因判断
 
-这个仓库最初解决的是冷启动后 SN6140 扬声器功放没有被正确唤醒的问题。后来在 Ubuntu 26.04 / kernel `7.0.0-27-generic` 上又复现了两个变体：
+这个仓库最初解决的是冷启动后 SN6140 扬声器功放没有被正确唤醒的问题。后来在 Ubuntu 26.04 / kernel `7.0.0-27-generic` 和 `7.0.0-29-generic` 上又复现了两个变体：
 
 1. `snd_hda_intel` 的 HDA runtime power saving 会让 codec/功放在空闲后丢状态。
-2. suspend/resume 后 ALSA/WirePlumber 的恢复顺序可能把 `Speaker` mixer 重新置为 `0% [off]`，而插入耳机会触发 jack 事件并刷新路由，所以外放又恢复。
+2. 长时间 suspend 后 SN6140 的外置扬声器功放会丢失硬件锁存状态。此时 codec、PipeWire、`Speaker` mixer 和软件音量都可能显示正常，但功放实际没有工作；插入耳机会产生 jack 状态边沿并重新初始化路由，所以外放反而恢复。
 
 最终修复需要同时处理冷启动、运行时省电和合盖唤醒。
+
+旧版 v3 对合盖问题的判断方向正确，但把恢复钩子安装到了 `/etc/systemd/system-sleep/`。Ubuntu 26.04 的 systemd 实际只执行 `/usr/lib/systemd/system-sleep/` 中的钩子，因此 v3 的唤醒修复从未运行。短时间合盖测试时功放尚未完全掉电，声音碰巧仍可用，导致当时误以为问题已经解决；一夜 suspend 后功放彻底丢状态，问题才稳定复现。
 
 ## 给 AI 的排障方案
 
@@ -85,10 +89,11 @@ sudo reboot
 systemctl status huawei-sn6140-audio-fix.timer
 ```
 
-并安装一个 suspend/resume hook：
+并安装一个 suspend/resume hook 和独立的恢复服务：
 
 ```bash
-ls -l /etc/systemd/system-sleep/huawei-sn6140-audio-fix
+ls -l /usr/lib/systemd/system-sleep/huawei-sn6140-audio-fix
+systemctl status huawei-sn6140-audio-resume-fix.service
 ```
 
 ## 状态检查
@@ -105,7 +110,7 @@ ls -l /etc/systemd/system-sleep/huawei-sn6140-audio-fix
 /sys/bus/pci/devices/0000:00:1f.3/power/control=on
 ```
 
-如果合盖唤醒后无声，`Speaker` 常见异常状态是：
+某些唤醒失败中，`Speaker` 会变成：
 
 ```text
 Speaker: Playback 0 [0%] [-74.00dB] [off]
@@ -116,6 +121,8 @@ Speaker: Playback 0 [0%] [-74.00dB] [off]
 ```bash
 sudo /usr/local/sbin/huawei-sn6140-audio-fix once
 ```
+
+也可能像 `7.0.0-29-generic` 上的长时间挂起一样，`Speaker` 仍是 `100% [on]`、HDA 电源策略也正确，但外置功放没有响应。这时仍需执行同一套 HDA “先关再开”序列。
 
 ## 它做了什么
 
@@ -144,8 +151,14 @@ options snd_hda_intel power_save=0 power_save_controller=N
 ## 开机和合盖唤醒策略
 
 - 开机后 20 秒触发 systemd timer，并在约 2 分钟内重复修复 12 次。
-- 合盖 suspend 后再唤醒时，system-sleep hook 会安排一个延迟任务。
+- 合盖 suspend 后再唤醒时，位于 systemd 实际扫描目录中的 hook 会启动独立的 `huawei-sn6140-audio-resume-fix.service`。
 - 延迟任务会在唤醒后稍等，再每隔数秒重复修复多次，覆盖 ALSA/WirePlumber/桌面会话陆续恢复并覆盖 mixer 的时间窗口。
+- hook 和恢复服务会写入 journal，可用下面的命令确认一次恢复是否真的触发了修复：
+
+```bash
+journalctl -b -t huawei-sn6140-audio-sleep
+journalctl -b -u huawei-sn6140-audio-resume-fix.service
+```
 
 ## 卸载
 
